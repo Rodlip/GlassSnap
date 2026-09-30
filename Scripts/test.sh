@@ -4,3 +4,5 @@ cd "$(dirname "$0")/.."
 export CLANG_MODULE_CACHE_PATH="$PWD/.build/clang-cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$PWD/.build/module-cache"
 swift test --disable-sandbox
+
+python3 Tests/UpdateWorkflowTests/test_update_workflow.py

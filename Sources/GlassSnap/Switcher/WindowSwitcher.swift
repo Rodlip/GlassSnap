@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import QuartzCore
 import SwiftUI
 import SnapGeometry
 
@@ -175,10 +176,22 @@ final class WindowSwitcher {
         guard let panel, !panel.isVisible else { return }
         fitPanel()
         panel.contentView?.layoutSubtreeIfNeeded()
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        panel.alphaValue = reduceMotion ? 1 : 0
         panel.makeKeyAndOrderFront(nil)
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.065
-            panel.animator().alphaValue = 1
+        guard !reduceMotion else { return }
+        // Draw the final-size content before starting the opacity animation, so
+        // initial SwiftUI/glass rendering does not consume the short fade.
+        panel.displayIfNeeded()
+        let token = session
+        DispatchQueue.main.async { [weak self, weak panel] in
+            guard let self, let panel, self.session == token,
+                  self.panel === panel, panel.isVisible else { return }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().alphaValue = 1
+            }
         }
     }
     private func acceptSelection() {

@@ -241,10 +241,7 @@ final class SnapController {
     private func hoverDivider(at point: CGPoint) {
         guard !resizing, !draggingWindow, candidate == nil, !palette.isVisible,
               preferences.enabled, preferences.dividers, !groups.isEmpty else { return }
-        if let panel = divider.panel, panel.frame.insetBy(dx: -10, dy: -10).contains(point) { return }
         let now = ProcessInfo.processInfo.systemUptime
-        guard now-lastEventTime > 1.0/30 else { return }
-        lastEventTime = now
         let ax = Screens.toAX(point)
         for group in groups.reversed() {
             guard let screen = Screens.withID(group.screenID) else { continue }
@@ -253,9 +250,16 @@ final class SnapController {
                 let line = seam.vertical ? usable.minX+seam.boundary*usable.width : usable.minY+seam.boundary*usable.height
                 let along = seam.vertical ? (ax.y-usable.minY)/usable.height : (ax.x-usable.minX)/usable.width
                 guard abs((seam.vertical ? ax.x : ax.y)-line) <= max(12, preferences.gap/2+5), along > seam.lower+0.02, along < seam.upper-0.02 else { continue }
-                guard now-lastValidationTime > 0.12 else { return }
-                lastValidationTime = now
-                guard validate(group), exposed(seam, group: group, at: ax) else { continue }
+                // Track every mouse event, including events inside the handle.
+                // Only AX frame validation is throttled; it must not gate movement.
+                let sameSeam = currentSeam?.groupID == seam.groupID &&
+                    currentSeam?.vertical == seam.vertical &&
+                    currentSeam?.first == seam.first && currentSeam?.second == seam.second
+                if !sameSeam || now-lastValidationTime >= 0.12 {
+                    lastValidationTime = now
+                    guard validate(group) else { continue }
+                }
+                guard exposed(seam, group: group, at: ax) else { continue }
                 if currentSeam?.vertical != seam.vertical { divider.hide() }
                 currentSeam = seam
                 let center = seam.vertical ? CGPoint(x: line, y: ax.y) : CGPoint(x: ax.x, y: line)
@@ -308,11 +312,17 @@ final class SnapController {
     private func resize(at point: CGPoint, force: Bool = false) {
         guard resizing, let seam = currentSeam, let group = groups.first(where: { $0.id == seam.groupID }),
               let screen = Screens.withID(group.screenID) else { return }
+        let usable = Screens.toAX(screen.visibleFrame).insetBy(dx: preferences.gap, dy: preferences.gap)
+        let ax = Screens.toAX(point)
+        // Keep the grip centered along the accepted seam even when window writes
+        // are throttled or an app rejects the next size.
+        let accepted = group.zones[seam.first]
+        let acceptedLine = seam.vertical ? usable.minX+accepted.maxX*usable.width : usable.minY+accepted.maxY*usable.height
+        let acceptedCenter = seam.vertical ? CGPoint(x: acceptedLine, y: ax.y) : CGPoint(x: ax.x, y: acceptedLine)
+        divider.show(at: Screens.toAX(acceptedCenter), vertical: seam.vertical)
         let now = ProcessInfo.processInfo.systemUptime
         guard force || now-lastEventTime >= 1.0/60 else { return }
         lastEventTime = now
-        let usable = Screens.toAX(screen.visibleFrame).insetBy(dx: preferences.gap, dy: preferences.gap)
-        let ax = Screens.toAX(point)
         let desired = seam.vertical ? (ax.x-usable.minX)/usable.width : (ax.y-usable.minY)/usable.height
         guard let zones = Geometry.resized(resizeZones, vertical: seam.vertical, boundary: seam.boundary, to: desired, minimums: minimums) else { return }
         let previous = group.windows.mapValues(\.expected)

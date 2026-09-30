@@ -31,3 +31,10 @@ Resources/Info.local.plist
 *.pfx
 *.mobileprovision
 *.provisionprofile
+
+# Durable signing identity configuration (private key stays in Keychain)
+.glasssnap-signing.local.json
+*.cer
+*.der
+*.keychain
+*.keychain-db

@@ -21,15 +21,41 @@ GlassSnap is a lightweight menu bar utility inspired by Windows snap layouts and
 Requires **macOS 26+** and **Xcode 26+ with Swift 6**. No third-party dependencies.
 
 ```sh
-./Scripts/build.sh
-open build
+./Scripts/setup-signing.sh        # one-time local signing setup
+./Scripts/update.sh               # test, build, sign, install, and launch
 ```
 
-Move **GlassSnap.app** from the build folder into **Applications**, then open it. To launch at login, add that installed copy under **System Settings → General → Login Items → Open at Login**.
+The updater installs and opens **/Applications/GlassSnap.app**. To launch at login, add that installed copy under **System Settings → General → Login Items → Open at Login**.
 
 Grant **Accessibility** for arranging, selecting, and closing windows. Optionally grant **Screen & System Audio Recording** for thumbnails. If GlassSnap is missing from either permission list, use **+** to select the installed app, then relaunch it.
 
-Local builds use ad-hoc signing. Rebuilding can invalidate macOS permissions; finish building and installing before granting access. A signing identity can be supplied through the `GLASSSNAP_SIGNING_IDENTITY` environment variable. An optional, ignored `Resources/Info.local.plist` overrides the public bundle metadata for personal builds.
+## Updating without repeated permission resets
+
+Run `./Scripts/setup-signing.sh` once to create a local code-signing identity in your login Keychain. It creates no Apple account and changes no system trust settings. Only `codesign` is authorized to use this key. If you already have an appropriate identity, pass its exact certificate fingerprint with `--identity`.
+
+For an existing **ad-hoc-signed** installation, migrate once:
+
+```sh
+./Scripts/update.sh --migrate-signing
+```
+
+macOS may require one final Accessibility and Screen Recording grant after this identity transition. Afterwards, use:
+
+```sh
+./Scripts/update.sh
+```
+
+The updater runs tests, builds with the saved certificate, verifies the bundle ID and certificate requirement, stages the app, backs up the installed version, replaces `/Applications/GlassSnap.app`, and relaunches it. Failed launch/verification attempts restore the previous version where possible. Backups remain under the ignored `build/update-backups/` directory. Use `--prepare` to build and verify without installing.
+
+Keep the certificate, `.glasssnap-signing.local.json`, bundle ID, and installed path stable. The private key remains in Keychain; local configuration and `Resources/Info.local.plist` are ignored by Git. Do not regenerate the certificate for routine updates. A missing/changed signer fails the update instead of silently falling back to ad-hoc signing. `./Scripts/build.sh --adhoc` is available only for disposable development builds; do not install those over the stable copy.
+
+This preserves [the code identity macOS uses for privacy access](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements); macOS can still require reauthorization after OS policy changes or certificate replacement. Local self-signed certificates are for personal use, not notarized public distribution.
+
+### Removing the local signing key later
+
+You can remove it without uninstalling the already signed app. In **Keychain Access → login → My Certificates**, find **GlassSnap Local Development**, verify its SHA-1 fingerprint against `.glasssnap-signing.local.json`, and delete that certificate and its associated private key. Remove the local JSON configuration afterwards. If you reused another certificate, do not delete it without checking whether other projects depend on it.
+
+Removing the key ends your ability to sign future updates with the same identity. The installed app does not need the private key to run; a future replacement identity may require fresh macOS permission grants. Do not remove the key after each update.
 
 For predictable snapping, disable macOS’s **Drag windows to menu bar to fill screen** option under **Desktop & Dock**, and pause conflicting window managers.
 

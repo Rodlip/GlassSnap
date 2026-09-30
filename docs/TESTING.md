@@ -13,6 +13,7 @@ Use disposable Finder/TextEdit windows to avoid disturbing important work.
 - Drag a title bar near the top center, 80–100 points below the edge and to either side of the palette: it should appear immediately and remain open while moving into a zone. Repeat at the exact outer top edge with the configured delay; drag text or resize a window to confirm those actions do not summon the picker.
 - Visit every layout and drop into every zone. Check that Dock and menu bar are excluded.
 - Fill two halves. Hover the seam and drag to roughly 60:40, then 40:60. Press Escape mid-drag and check both windows restore.
+- Move slowly and quickly along a shared edge, including across the glass handle itself: its center should continuously follow the pointer without pausing and jumping by a handle length. Repeat for horizontal edges and while dragging diagonally to resize; at a minimum size, the handle must stay on the accepted seam while following the pointer along it.
 - Fill three columns. Drag each seam independently and verify the far column stays fixed.
 - Fill quarters. Drag the central vertical and horizontal lines and check all touching windows change together.
 - Test the minimum width of each app: no new overlap should remain after a rejected resize.
@@ -43,4 +44,4 @@ For on-device verification, enable Accessibility and optionally Screen Recording
 
 - Switcher layout: check one, two, three, and six windows, plus a partially filled final page. The glass should fit the cards with 16-point padding; every row should be centered. Up/down navigation should select the nearest card in the centered neighboring row.
 
-- Five-over-two silhouette: empty bottom-left and bottom-right corners should be transparent, while a continuous rounded glass edge wraps the bottom pair. Opening should only fade opacity for 65 ms at the final size; no growth, selection transition, or image fade.
+- Five-over-two silhouette: empty bottom-left and bottom-right corners should be transparent, while a continuous rounded glass edge wraps the bottom pair. Opening should visibly fade opacity for 180 ms at the final size; no growth, selection transition, or image fade. Check both Option+Tab and menu-bar opening, rapid dismissal/reopening during the fade, and immediate appearance with Reduce Motion enabled.

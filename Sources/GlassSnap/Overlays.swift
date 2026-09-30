@@ -180,6 +180,7 @@ final class DividerOverlay {
         let rect = CGRect(x: point.x-size.width/2, y: point.y-size.height/2, width: size.width, height: size.height)
         if let panel { panel.setFrame(rect, display: true); return }
         let panel = OverlayPanel(frame: rect, interactive: true)
+        panel.acceptsMouseMovedEvents = true
         let view = DividerView(frame: CGRect(origin: .zero, size: size))
         view.vertical = vertical
         view.onDown = { [weak self] in self?.onDown?() }
