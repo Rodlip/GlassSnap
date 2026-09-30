@@ -1,0 +1,33 @@
+# Swift / Xcode build output
+.build/
+build/
+dist/
+DerivedData/
+.swiftpm/
+xcuserdata/
+*.xcuserstate
+*.app/
+*.dSYM/
+
+# macOS and local diagnostics
+.DS_Store
+*.log
+
+# Local agent instructions and editor/agent state
+[Aa][Gg][Ee][Nn][Tt][Ss].md
+.agents/
+.codex/
+
+# Personal configuration and secrets
+Resources/Info.local.plist
+*.local.*
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.mobileprovision
+*.provisionprofile
