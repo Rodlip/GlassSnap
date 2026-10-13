@@ -101,6 +101,47 @@ class UpdateWorkflowTests(unittest.TestCase):
         self.assertEqual(len(backups), 1)
         self.assertEqual(backups[0].read_text(), 'installed')
 
+    def write_plists(self, public='io.example.GlassSnap', local='local.GlassSnap'):
+        resources = self.root / 'Resources'
+        resources.mkdir(exist_ok=True)
+        base = {'CFBundleShortVersionString': '1.0.0'}
+        (resources / 'Info.plist').write_bytes(plistlib.dumps(dict(base, CFBundleIdentifier=public)))
+        (resources / 'Info.local.plist').write_bytes(plistlib.dumps(dict(base, CFBundleIdentifier=local)))
+        keychain = self.root / 'login.keychain-db'
+        keychain.write_text('')
+        return keychain
+
+    def test_release_setup_reuses_local_certificate_with_public_bundle_id(self):
+        keychain = self.write_plists()
+        local, release = self.root / 'local.json', self.root / 'release.json'
+        local.write_text(maintenance.json.dumps(dict(self.config, keychain=str(keychain))))
+        with patch.object(maintenance, 'CONFIG', local), patch.object(maintenance, 'RELEASE_CONFIG', release), \
+             patch.object(maintenance, 'run') as run:
+            maintenance.setup_release()
+            run.assert_not_called()
+            saved = maintenance.json.loads(release.read_text())
+            self.assertEqual(saved['identity_sha1'], 'A' * 40)
+            self.assertEqual(saved['bundle_identifier'], 'io.example.GlassSnap')
+            self.assertEqual(maintenance.configuration(release=True), saved)
+
+    def test_release_refuses_public_bundle_id_change(self):
+        keychain = self.write_plists(public='io.example.Renamed')
+        release = self.root / 'release.json'
+        release.write_text(maintenance.json.dumps({'identity_sha1': 'A' * 40, 'keychain': str(keychain),
+                                                   'bundle_identifier': 'io.example.GlassSnap'}))
+        with patch.object(maintenance, 'RELEASE_CONFIG', release):
+            with self.assertRaisesRegex(RuntimeError, 'Bundle identity changed'):
+                maintenance.configuration(release=True)
+
+    def test_publish_with_uncommitted_changes_builds_nothing(self):
+        self.write_plists()
+        with patch.object(maintenance, 'configuration', return_value=self.config), \
+             patch.object(maintenance.shutil, 'which', return_value='/usr/bin/gh'), \
+             patch.object(maintenance, 'run', return_value=' M Sources/GlassSnap/App.swift') as run:
+            with self.assertRaisesRegex(RuntimeError, 'Commit or stash'):
+                maintenance.release(publish=True)
+            self.assertEqual([str(call.args[0][0]) for call in run.call_args_list], ['git'])
+
 
 if __name__ == '__main__':
     unittest.main()

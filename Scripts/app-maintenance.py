@@ -18,8 +18,13 @@ import time
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / '.glasssnap-signing.local.json'
+# Public releases use the public bundle ID. Every release must be signed by the
+# same certificate, or users' Accessibility and Screen Recording grants reset.
+RELEASE_CONFIG = ROOT / '.glasssnap-release.local.json'
 TARGET = Path('/Applications/GlassSnap.app')
 BUILD = ROOT / 'build/GlassSnap.app'
+RELEASE_BUILD = ROOT / 'build/release/GlassSnap.app'
+ARCHIVE = ROOT / 'dist/GlassSnap.zip'
 
 
 def run(args, *, capture=False, env=None):
@@ -38,24 +43,27 @@ def info(app):
         return plistlib.load(stream)
 
 
-def build_info():
+def build_info(release=False):
     path = ROOT / 'Resources/Info.local.plist'
-    if not path.exists():
+    if release or not path.exists():
         path = ROOT / 'Resources/Info.plist'
     with path.open('rb') as stream:
         return plistlib.load(stream)
 
 
-def configuration():
-    if not CONFIG.exists():
+def configuration(release=False):
+    path = RELEASE_CONFIG if release else CONFIG
+    if not path.exists():
+        if release:
+            raise RuntimeError('Release signing is not configured. Run ./Scripts/setup-signing.sh --release first.')
         raise RuntimeError('Stable signing is not configured. Run ./Scripts/setup-signing.sh first. '
                            'For a disposable unsigned-identity build only, use ./Scripts/build.sh --adhoc.')
-    data = json.loads(CONFIG.read_text())
+    data = json.loads(path.read_text())
     if not re.fullmatch(r'[0-9A-Fa-f]{40}', data.get('identity_sha1', '')):
         raise RuntimeError('Invalid signing fingerprint in local configuration.')
     if not re.fullmatch(r'[A-Za-z0-9.-]+', data.get('bundle_identifier', '')):
         raise RuntimeError('Invalid bundle identifier in local configuration.')
-    if build_info()['CFBundleIdentifier'] != data['bundle_identifier']:
+    if build_info(release)['CFBundleIdentifier'] != data['bundle_identifier']:
         raise RuntimeError('Bundle identity changed. Restore the local plist; do not reset permissions or replace the signing identity.')
     if not Path(data['keychain']).is_file():
         raise RuntimeError('The configured keychain is unavailable. Restore it; do not generate another identity.')
@@ -73,14 +81,43 @@ def verify(app, data):
     run(['/usr/bin/codesign', '--verify', '--strict', '-R', '=' + requirement(data), app], capture=True)
 
 
-def sign(app):
-    data = configuration()
+def sign(app, release=False):
+    data = configuration(release)
     if info(app)['CFBundleIdentifier'] != data['bundle_identifier']:
         raise RuntimeError('Refusing to sign a bundle with a different identifier.')
     run(['/usr/bin/codesign', '--force', '--sign', data['identity_sha1'], '--keychain', data['keychain'],
          '--timestamp=none', '--identifier', data['bundle_identifier'],
          '--requirements', '=designated => ' + requirement(data), app])
     verify(app, data)
+
+
+def save_configuration(path, data):
+    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    with os.fdopen(descriptor, 'w') as stream:
+        json.dump(data, stream, indent=2)
+        stream.write('\n')
+
+
+def setup_release(identity=None):
+    if RELEASE_CONFIG.exists():
+        configuration(release=True)
+        print('Release signing is already configured. Keeping the existing identity.')
+        return
+    if identity:
+        if not re.fullmatch(r'[0-9A-Fa-f]{40}', identity):
+            raise RuntimeError('--identity must be the exact 40-character certificate fingerprint, not an ambiguous display name.')
+        fingerprint = identity.upper()
+        keychain = run(['/usr/bin/security', 'default-keychain', '-d', 'user'], capture=True).strip('"')
+    else:
+        # Reuse the existing local certificate; never create a second identity here.
+        local = configuration()
+        fingerprint, keychain = local['identity_sha1'], local['keychain']
+    bundle_id = build_info(release=True)['CFBundleIdentifier']
+    if not re.fullmatch(r'[A-Za-z0-9.-]+', bundle_id):
+        raise RuntimeError('Unsupported bundle identifier.')
+    save_configuration(RELEASE_CONFIG, {'identity_sha1': fingerprint, 'keychain': keychain, 'bundle_identifier': bundle_id})
+    print(f'Releases of {bundle_id} will be signed with your existing certificate.')
+    print('Keep that certificate: users keep their permissions only while every release uses it.')
 
 
 def setup(identity=None):
@@ -141,11 +178,7 @@ subjectKeyIdentifier = hash
                  '-T', '/usr/bin/codesign'], capture=True)
             # Do not add a trusted root, change global trust, or grant all apps
             # access to this key. Signing verifies the exact pinned certificate.
-    data = {'identity_sha1': fingerprint, 'keychain': keychain, 'bundle_identifier': bundle_id}
-    descriptor = os.open(CONFIG, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    with os.fdopen(descriptor, 'w') as stream:
-        json.dump(data, stream, indent=2)
-        stream.write('\n')
+    save_configuration(CONFIG, {'identity_sha1': fingerprint, 'keychain': keychain, 'bundle_identifier': bundle_id})
     print('Saved local signing configuration. The private key stays in your Keychain.')
     print('Next: ./Scripts/update.sh --migrate-signing (one-time transition from ad-hoc signing).')
 
@@ -247,22 +280,67 @@ def update(migrate=False, prepare=False):
         print('Previous version retained under build/update-backups/.')
 
 
+def publishable(tag):
+    if not shutil.which('gh'):
+        raise RuntimeError('Publishing needs the GitHub CLI (gh), signed in to this repository.')
+    if run(['git', 'status', '--porcelain'], capture=True):
+        raise RuntimeError('Commit or stash your changes first; a release must match a pushed commit.')
+    head = run(['git', 'rev-parse', 'HEAD'], capture=True)
+    run(['git', 'fetch', '--quiet', 'origin'])
+    if subprocess.run(['git', 'merge-base', '--is-ancestor', head, '@{upstream}'], cwd=ROOT).returncode:
+        raise RuntimeError('Push this commit first; the release is tagged at the current commit.')
+    if subprocess.run(['gh', 'release', 'view', tag], cwd=ROOT, capture_output=True).returncode == 0:
+        raise RuntimeError(f'{tag} is already published. Raise CFBundleShortVersionString and CFBundleVersion in Resources/Info.plist.')
+    return head
+
+
+def release(publish=False):
+    data = configuration(release=True)
+    version = build_info(release=True)['CFBundleShortVersionString']
+    tag = 'v' + version
+    commit = publishable(tag) if publish else None
+    run([ROOT / 'Scripts/test.sh'])
+    run([ROOT / 'Scripts/build.sh', '--release'])
+    verify(RELEASE_BUILD, data)
+    if info(RELEASE_BUILD)['CFBundleShortVersionString'] != version:
+        raise RuntimeError('The built app reports a different version than Resources/Info.plist.')
+    ARCHIVE.parent.mkdir(exist_ok=True)
+    ARCHIVE.unlink(missing_ok=True)
+    # Leave out local extended attributes; the signature doesn't need them.
+    run(['/usr/bin/ditto', '-c', '-k', '--norsrc', '--noextattr', '--keepParent', RELEASE_BUILD, ARCHIVE])
+    digest = hashlib.sha256(ARCHIVE.read_bytes()).hexdigest()
+    print(f'Packaged GlassSnap {version}: {ARCHIVE.relative_to(ROOT)} (SHA-256 {digest})')
+    if not publish:
+        print('Not published. Run ./Scripts/release.sh --publish to create the GitHub release.')
+        return
+    notes = (f'Download **GlassSnap.zip**, unzip it, and move GlassSnap to Applications. '
+             f'Already installed? Choose **Check for Updates…** from the GlassSnap menu.\n\nSHA-256: `{digest}`')
+    run(['gh', 'release', 'create', tag, ARCHIVE, '--target', commit, '--title', f'GlassSnap {version}', '--notes', notes])
+    print(f'Published {tag}.')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
     setup_parser = sub.add_parser('setup')
     setup_parser.add_argument('--identity', help='Reuse an existing certificate by exact SHA-1 fingerprint')
-    sub.add_parser('check')
+    setup_parser.add_argument('--release', action='store_true', help='Configure signing for public GitHub releases')
+    check_parser = sub.add_parser('check')
+    check_parser.add_argument('--release', action='store_true')
     sign_parser = sub.add_parser('sign')
+    sign_parser.add_argument('--release', action='store_true')
     sign_parser.add_argument('app', type=Path)
+    release_parser = sub.add_parser('release')
+    release_parser.add_argument('--publish', action='store_true', help='Create the GitHub release after packaging')
     update_parser = sub.add_parser('update')
     update_parser.add_argument('--migrate-signing', action='store_true')
     update_parser.add_argument('--prepare', action='store_true', help='Build and verify without installing or restarting')
     args = parser.parse_args()
     try:
-        if args.command == 'setup': setup(args.identity)
-        elif args.command == 'check': configuration()
-        elif args.command == 'sign': sign(args.app.resolve())
+        if args.command == 'setup': setup_release(args.identity) if args.release else setup(args.identity)
+        elif args.command == 'check': configuration(args.release)
+        elif args.command == 'sign': sign(args.app.resolve(), args.release)
+        elif args.command == 'release': release(args.publish)
         else: update(args.migrate_signing, args.prepare)
     except (RuntimeError, OSError, ValueError, KeyError) as error:
         print(f'GlassSnap: {error}', file=sys.stderr)

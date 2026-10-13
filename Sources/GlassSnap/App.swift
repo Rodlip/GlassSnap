@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private let controller = SnapController()
     private let state = AppState()
     private let switcher = WindowSwitcher()
+    private let updater = Updater()
     private var settingsWindow: NSWindow?
     private var previewDismiss: DispatchWorkItem?
     private var activationObserver: NSObjectProtocol?
@@ -41,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         statusMenuItem = status; menu.addItem(status)
         menu.addItem(.separator())
         add("Settings…", action: #selector(showSettings), key: ",", to: menu)
+        add("Check for Updates…", action: #selector(checkForUpdates), to: menu)
         add("Switch windows…", action: #selector(showSwitcher), to: menu)
         add("Preview layouts", action: #selector(showPreview), to: menu)
         let layouts = NSMenuItem(title: "Arrange active window", action: nil, keyEquivalent: "")
@@ -72,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         switcher.onStatus = { [weak self] value in self?.state.status = value }
         switcher.onOpen = { [weak self] in self?.controller.cancelInteraction() }
         switcher.start()
+        updater.onStatus = { [weak self] value in self?.state.status = value }
         activationObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in self?.state.check() }
         if !UserDefaults.standard.bool(forKey: "hasLaunched") || !Accessibility.trusted || CommandLine.arguments.contains("--settings") {
             showSettings(); UserDefaults.standard.set(true, forKey: "hasLaunched")
@@ -94,13 +97,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             window.delegate = self
             window.title = "GlassSnap"; window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden; window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: SettingsView(state: state, preview: { [weak self] in self?.showPreview() }, switchWindows: { [weak self] in self?.showSwitcher() }))
+            window.contentView = NSHostingView(rootView: SettingsView(state: state, preview: { [weak self] in self?.showPreview() }, switchWindows: { [weak self] in self?.showSwitcher() }, checkForUpdates: { [weak self] in self?.checkForUpdates() }))
             window.center(); settingsWindow = window
         }
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
     @objc private func showSwitcher() { switcher.show() }
+    @objc private func checkForUpdates() { updater.check() }
     @objc private func showPreview() {
         previewDismiss?.cancel()
         guard let screen = Screens.at(NSEvent.mouseLocation) ?? NSScreen.main else { return }

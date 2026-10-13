@@ -14,6 +14,7 @@ struct SettingsView: View {
     @ObservedObject var state: AppState
     var preview: () -> Void
     var switchWindows: () -> Void
+    var checkForUpdates: () -> Void
     var body: some View {
         ZStack {
             LinearGradient(colors: [Color(nsColor: .windowBackgroundColor), Color.accentColor.opacity(0.07)], startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -90,7 +91,8 @@ struct SettingsView: View {
                         Circle().fill(state.trusted && preferences.enabled ? Color.green : Color.orange).frame(width: 6, height: 6)
                         Text(state.status).lineLimit(2)
                         Spacer()
-                        Text("0.2 · Made for your Mac").foregroundStyle(.tertiary)
+                        Button("Check for updates", action: checkForUpdates).buttonStyle(.plain).foregroundStyle(.secondary)
+                        Text("\(Updater.version) · Made for your Mac").foregroundStyle(.tertiary)
                     }.font(.system(size: 10)).foregroundStyle(.secondary)
                 }.padding(30)
             }

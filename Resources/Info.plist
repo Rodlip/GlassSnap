@@ -3,13 +3,14 @@
 <plist version="1.0"><dict>
 <key>CFBundleName</key><string>GlassSnap</string>
 <key>CFBundleDisplayName</key><string>GlassSnap</string>
-<key>CFBundleIdentifier</key><string>local.GlassSnap</string>
+<key>CFBundleIdentifier</key><string>io.github.rodlip.GlassSnap</string>
 <key>CFBundleExecutable</key><string>GlassSnap</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.2.0</string>
-<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>0.3.0</string>
+<key>CFBundleVersion</key><string>3</string>
 <key>LSMinimumSystemVersion</key><string>26.0</string>
+<key>GlassSnapUpdateRepository</key><string>Rodlip/GlassSnap</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSAccessibilityUsageDescription</key><string>GlassSnap uses Accessibility to arrange, select, and normally close the windows you choose.</string>
