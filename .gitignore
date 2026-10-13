@@ -15,6 +15,8 @@ xcuserdata/
 
 # Local agent instructions and editor/agent state
 [Aa][Gg][Ee][Nn][Tt][Ss].md
+[Cc][Ll][Aa][Uu][Dd][Ee].md
+.claude/
 .agents/
 .codex/
 
