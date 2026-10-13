@@ -35,7 +35,10 @@ It downloads the latest release, checks its signature, puts GlassSnap in Applica
 
 1. Click **Download** above, then open **GlassSnap.zip** in Downloads.
 2. Drag **GlassSnap** into **Applications** and open it.
-3. If macOS says it can’t verify the developer, open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**. You only need to do this once. GlassSnap is free and isn’t notarized by Apple.
+3. macOS will say **“Apple could not verify ‘GlassSnap’ is free of malware…”** and offer only **Done** and **Move to Trash**. This is expected for free apps that aren’t registered with Apple. Click **Done**, not Move to Trash.
+4. Open **System Settings → Privacy & Security** and scroll down to **Security**. Next to the message that GlassSnap was blocked, click **Open Anyway**, enter your password, and click **Open Anyway** again.
+
+You only do this once. Later updates open normally. The button appears for about an hour after you try to open the app; if it’s gone, open GlassSnap again and return to Privacy & Security. The Terminal command above skips this step entirely.
 
 ### First launch
 

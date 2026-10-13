@@ -294,6 +294,16 @@ def publishable(tag):
     return head
 
 
+def release_notes(digest):
+    return ('Download **GlassSnap.zip**, unzip it, and move GlassSnap to Applications.\n\n'
+            'The first time you open it, macOS says it “could not verify ‘GlassSnap’ is free of malware” and offers only '
+            '**Done** and **Move to Trash**. Click **Done**, then go to **System Settings → Privacy & Security**, scroll to '
+            '**Security**, and click **Open Anyway**. You only need to do this once. To skip it, install from Terminal instead:\n\n'
+            '```\ncurl -fsSL https://raw.githubusercontent.com/Rodlip/GlassSnap/main/Scripts/install.sh | bash\n```\n\n'
+            'Already installed? Choose **Check for Updates…** from the GlassSnap menu.\n\n'
+            f'SHA-256: `{digest}`')
+
+
 def release(publish=False):
     data = configuration(release=True)
     version = build_info(release=True)['CFBundleShortVersionString']
@@ -313,8 +323,7 @@ def release(publish=False):
     if not publish:
         print('Not published. Run ./Scripts/release.sh --publish to create the GitHub release.')
         return
-    notes = (f'Download **GlassSnap.zip**, unzip it, and move GlassSnap to Applications. '
-             f'Already installed? Choose **Check for Updates…** from the GlassSnap menu.\n\nSHA-256: `{digest}`')
+    notes = release_notes(digest)
     run(['gh', 'release', 'create', tag, ARCHIVE, '--target', commit, '--title', f'GlassSnap {version}', '--notes', notes])
     print(f'Published {tag}.')
 
