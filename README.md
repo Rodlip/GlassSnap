@@ -34,11 +34,9 @@ It downloads the latest release, checks its signature, puts GlassSnap in Applica
 **Or download it yourself:**
 
 1. Click **Download** above, then open **GlassSnap.zip** in Downloads.
-2. Drag **GlassSnap** into **Applications** and open it.
-3. macOS will say **“Apple could not verify ‘GlassSnap’ is free of malware…”** and offer only **Done** and **Move to Trash**. This is expected for free apps that aren’t registered with Apple. Click **Done**, not Move to Trash.
-4. Open **System Settings → Privacy & Security** and scroll down to **Security**. Next to the message that GlassSnap was blocked, click **Open Anyway**, enter your password, and click **Open Anyway** again.
+2. Drag **GlassSnap** into **Applications** and open it. macOS asks once to confirm opening an app downloaded from the internet.
 
-You only do this once. Later updates open normally. The button appears for about an hour after you try to open the app; if it’s gone, open GlassSnap again and return to Privacy & Security. The Terminal command above skips this step entirely.
+GlassSnap is signed with an Apple Developer ID and notarized by Apple.
 
 ### First launch
 
@@ -56,7 +54,9 @@ For predictable snapping, disable macOS’s **Drag windows to menu bar to fill s
 
 Choose **Check for Updates…** from the GlassSnap menu bar icon, or click **Check for updates** at the bottom of Settings. GlassSnap downloads the new version, checks that it’s signed by the same developer, replaces itself, and reopens.
 
-**You don’t need to grant permissions again.** macOS links Accessibility and Screen Recording to the app’s signature. Every release is signed with the same certificate, so the grants carry over. Running the install command again works too.
+**You don’t need to grant permissions again.** macOS links Accessibility and Screen Recording to the app’s signature. Every release is signed by the same developer, so the grants carry over. Running the install command again works too.
+
+**Coming from 0.3.0?** It was signed with a different certificate, so Check for Updates can’t install 0.4.0 or later. Run the install command above, or quit GlassSnap and replace it with a fresh download. Then grant permissions once more: in **System Settings → Privacy & Security → Accessibility**, select GlassSnap, click **–**, then click **Enable access** in GlassSnap. Do the same under **Screen & System Audio Recording** if you use previews.
 
 GlassSnap only goes online when you ask it to check for updates.
 
@@ -95,7 +95,7 @@ The updater runs tests, builds with the saved certificate, verifies the bundle I
 
 Keep the certificate, `.glasssnap-signing.local.json`, bundle ID, and installed path stable. The private key remains in Keychain; local configuration and `Resources/Info.local.plist` are ignored by Git. Do not regenerate the certificate for routine updates. A missing/changed signer fails the update instead of silently falling back to ad-hoc signing. `./Scripts/build.sh --adhoc` is available only for disposable development builds; do not install those over the stable copy.
 
-This preserves [the code identity macOS uses for privacy access](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements); macOS can still require reauthorization after OS policy changes or certificate replacement. A self-signed certificate isn’t notarized, which is why a downloaded copy needs **Open Anyway** once.
+This preserves [the code identity macOS uses for privacy access](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements); macOS can still require reauthorization after OS policy changes or certificate replacement. This self-signed certificate is for builds on your own Mac; public releases use Developer ID instead.
 
 #### Removing the local signing key later
 
@@ -105,15 +105,26 @@ Removing the key ends your ability to sign future updates with the same identity
 
 ### Publishing a release
 
-Releases use the public bundle ID in `Resources/Info.plist` and must always be signed with the same certificate, or downloaded copies lose their permissions after an update.
+Releases use the public bundle ID in `Resources/Info.plist`, are signed with a **Developer ID Application** certificate, and are notarized by Apple. macOS ties users’ permissions to the developer team, so every release must come from the same Apple developer team.
+
+One-time setup needs an Apple Developer Program membership:
+
+1. In Xcode → Settings → Accounts → Manage Certificates, add a **Developer ID Application** certificate. Export a .p12 backup somewhere safe.
+2. Create an app-specific password at account.apple.com, then save it for notarization (the command asks for the password):
 
 ```sh
-./Scripts/setup-signing.sh --release   # once: reuse your existing signing certificate for releases
-./Scripts/release.sh                   # test, build a universal app, sign, and zip it to dist/
+xcrun notarytool store-credentials glasssnap-notary --apple-id <Apple ID> --team-id <Team ID>
+./Scripts/setup-signing.sh --release   # finds the Developer ID certificate and checks the notarization profile
+```
+
+Then for each release:
+
+```sh
+./Scripts/release.sh                   # test, build a universal app, sign, notarize, staple, and zip it to dist/
 ./Scripts/release.sh --publish         # same, then create the GitHub release (needs gh)
 ```
 
-For each new release, raise `CFBundleShortVersionString` and `CFBundleVersion` in `Resources/Info.plist`, commit, and push. Publishing tags the pushed commit as `v<version>` and uploads `GlassSnap.zip`, which the download button, install script, and in-app updater all use. If the certificate’s private key is lost, existing users must reinstall and grant permissions again, so keep it safe.
+Raise `CFBundleShortVersionString` and `CFBundleVersion` in `Resources/Info.plist`, commit, and push before publishing. Publishing tags the pushed commit as `v<version>` and uploads `GlassSnap.zip`, which the download button, install script, and in-app updater all use. A renewed or replacement Developer ID certificate from the same team keeps users’ permissions; a different team does not. `Scripts/install.sh` pins the Team ID, so change it there too if the team ever changes.
 
 ## Controls
 

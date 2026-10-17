@@ -1,11 +1,15 @@
 #!/bin/bash
 # Install or update GlassSnap from the latest GitHub release:
 #   curl -fsSL https://raw.githubusercontent.com/Rodlip/GlassSnap/main/Scripts/install.sh | bash
-# An existing copy is replaced only by one signed with the same certificate,
-# so macOS keeps its Accessibility and Screen Recording permissions.
+# Releases are signed with GlassSnap's Developer ID and notarized by Apple. An
+# existing copy is replaced only by one from the same developer, so macOS keeps
+# its Accessibility and Screen Recording permissions.
 set -euo pipefail
 REPOSITORY="Rodlip/GlassSnap"
 DOWNLOAD="https://github.com/$REPOSITORY/releases/latest/download/GlassSnap.zip"
+BUNDLE_ID="io.github.rodlip.GlassSnap"
+TEAM_ID="2PSR8KLD95"
+RELEASE_REQUIREMENT="identifier \"$BUNDLE_ID\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] and certificate leaf[field.1.2.840.113635.100.6.1.13] and certificate leaf[subject.OU] = \"$TEAM_ID\""
 
 fail() { printf '\nGlassSnap: %s\n' "$1" >&2; exit 1; }
 
@@ -25,13 +29,21 @@ curl -fL --progress-bar "$DOWNLOAD" -o "$work/GlassSnap.zip" || fail "The downlo
 ditto -x -k "$work/GlassSnap.zip" "$work/expanded" || fail "The download couldn’t be unpacked."
 candidate="$work/expanded/GlassSnap.app"
 [[ -d "$candidate" ]] || fail "The download doesn’t contain GlassSnap.app."
-codesign --verify --strict "$candidate" 2>/dev/null || fail "The download’s signature is invalid. Nothing was installed."
+codesign --verify --strict -R="$RELEASE_REQUIREMENT" "$candidate" 2>/dev/null \
+    || fail "The download isn’t signed by GlassSnap’s developer. Nothing was installed."
 
+regrant=false
 if [[ -d "$APP" ]]; then
     # Same signer, same identity: permissions carry over.
     requirement="$(codesign -d -r- "$APP" 2>/dev/null | sed -n 's/^designated => //p')"
-    [[ -n "$requirement" ]] && codesign --verify --strict -R="$requirement" "$candidate" 2>/dev/null \
-        || fail "The installed GlassSnap was signed differently (perhaps built from source). Quit it and remove $APP to switch to the release, or keep updating it with ./Scripts/update.sh."
+    if [[ -z "$requirement" ]] || ! codesign --verify --strict -R="$requirement" "$candidate" 2>/dev/null; then
+        # 0.3.0 and earlier releases used a self-signed certificate. Moving to
+        # Developer ID is allowed once, and needs the permissions granted again.
+        installed_id="$(defaults read "$APP/Contents/Info.plist" CFBundleIdentifier 2>/dev/null || true)"
+        [[ "$installed_id" == "$BUNDLE_ID" && "$requirement" == *'certificate leaf = H"'* ]] \
+            || fail "The installed GlassSnap was signed differently (perhaps built from source). Quit it and remove $APP to switch to the release, or keep updating it with ./Scripts/update.sh."
+        regrant=true
+    fi
     # Quit only this exact copy, politely.
     executable="$APP/Contents/MacOS/GlassSnap"
     pids() { ps -axo pid=,comm= | awk -v path="$executable" '{ pid = $1; $1 = ""; sub(/^ /, ""); if ($0 == path) print pid }'; }
@@ -52,4 +64,12 @@ open "$APP"
 
 version="$(defaults read "$APP/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null || true)"
 printf '\nGlassSnap %s is installed in %s and running in your menu bar.\n' "$version" "$DESTINATION_DIR"
-printf 'First time? Click “Enable access” to allow Accessibility. Later updates: GlassSnap menu → Check for Updates…\n'
+if [[ "$regrant" == true ]]; then
+    printf '\nThis version is signed by Apple Developer ID, so macOS needs your permission once more:\n'
+    printf '  1. System Settings → Privacy & Security → Accessibility: select GlassSnap and click –.\n'
+    printf '  2. Click “Enable access” in GlassSnap and turn it on again.\n'
+    printf '  3. If you use previews, do the same under Screen & System Audio Recording.\n'
+    printf 'Later updates keep your permissions.\n'
+else
+    printf 'First time? Click “Enable access” to allow Accessibility. Later updates: GlassSnap menu → Check for Updates…\n'
+fi

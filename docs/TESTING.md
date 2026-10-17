@@ -48,14 +48,15 @@ For on-device verification, enable Accessibility and optionally Screen Recording
 
 ## Install and update
 
-Automated coverage: `ReleaseVersionTests` checks tag comparison, and the Python suite checks that release signing reuses the existing certificate, refuses a changed public bundle ID, and won't publish from an uncommitted tree.
+Automated coverage: `ReleaseVersionTests` checks tag comparison, and the Python suite checks that release setup picks the single Developer ID certificate, refuses a self-signed or changed release identity, signs with the hardened runtime, stops when notarization isn't accepted, and won't publish from an uncommitted tree.
 
 On-device, using a published release:
 
 - Run the install command on a Mac without GlassSnap: it should install to Applications, open with no Gatekeeper prompt, and show Settings. Grant Accessibility and Screen Recording.
-- Download GlassSnap.zip in Safari instead: the first launch should need **Open Anyway** once in Privacy & Security.
+- Download GlassSnap.zip in Safari instead: the first launch should show only the standard “downloaded from the internet” confirmation, with no **Open Anyway** step.
 - With an older release installed, choose **Check for Updates…**: confirm, then GlassSnap should quit, reopen at the new version, and keep both permissions (snap a window, open Option+Tab previews) without new prompts.
 - Check when already current: it should say you're up to date. Disconnect the network: it should show an error with a link to the releases page and leave the app unchanged.
 - Run the install command over an ad-hoc or source-built copy: it should refuse and leave that copy alone.
+- Run the install command over the self-signed 0.3.0 release: it should replace it once and explain how to grant permissions again. In 0.3.0, **Check for Updates…** should refuse the Developer ID release and offer the releases page.
 - In a source-built copy, **Check for Updates…** should open Terminal and run `./Scripts/update.sh` from that checkout.
 - With Settings closed and no update check running, idle CPU should show no network or timer activity.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local certificate signing and verified, recoverable app updates. No TCC edits."""
+"""Local certificate signing, notarized Developer ID releases, and verified, recoverable app updates. No TCC edits."""
 import argparse
 import datetime
 import hashlib
@@ -18,9 +18,11 @@ import time
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / '.glasssnap-signing.local.json'
-# Public releases use the public bundle ID. Every release must be signed by the
-# same certificate, or users' Accessibility and Screen Recording grants reset.
+# Public releases use the public bundle ID, Developer ID signing, and Apple
+# notarization. macOS ties Accessibility and Screen Recording grants to the
+# Team ID, so every release must come from the same Apple developer team.
 RELEASE_CONFIG = ROOT / '.glasssnap-release.local.json'
+NOTARY_PROFILE = 'glasssnap-notary'
 TARGET = Path('/Applications/GlassSnap.app')
 BUILD = ROOT / 'build/GlassSnap.app'
 RELEASE_BUILD = ROOT / 'build/release/GlassSnap.app'
@@ -67,10 +69,25 @@ def configuration(release=False):
         raise RuntimeError('Bundle identity changed. Restore the local plist; do not reset permissions or replace the signing identity.')
     if not Path(data['keychain']).is_file():
         raise RuntimeError('The configured keychain is unavailable. Restore it; do not generate another identity.')
+    if release:
+        if 'team_id' not in data:
+            raise RuntimeError('Release signing still uses the self-signed certificate. '
+                               'Run ./Scripts/setup-signing.sh --release to switch to Developer ID.')
+        if not re.fullmatch(r'[A-Z0-9]{10}', data['team_id']):
+            raise RuntimeError('Invalid Team ID in release configuration.')
+        if not re.fullmatch(r'[A-Za-z0-9._-]+', data.get('notary_profile', '')):
+            raise RuntimeError('Invalid notarization profile in release configuration.')
     return data
 
 
 def requirement(data):
+    if 'team_id' in data:
+        # Apple's Developer ID requirement: any certificate Apple issues to this
+        # team satisfies it, so a renewed certificate keeps users' permissions.
+        return (f'identifier "{data["bundle_identifier"]}" and anchor apple generic'
+                ' and certificate 1[field.1.2.840.113635.100.6.2.6]'
+                ' and certificate leaf[field.1.2.840.113635.100.6.1.13]'
+                f' and certificate leaf[subject.OU] = "{data["team_id"]}"')
     # Pin both the app identifier and the actual certificate, never just a name.
     return f'identifier "{data["bundle_identifier"]}" and certificate leaf = H"{data["identity_sha1"]}"'
 
@@ -85,9 +102,15 @@ def sign(app, release=False):
     data = configuration(release)
     if info(app)['CFBundleIdentifier'] != data['bundle_identifier']:
         raise RuntimeError('Refusing to sign a bundle with a different identifier.')
-    run(['/usr/bin/codesign', '--force', '--sign', data['identity_sha1'], '--keychain', data['keychain'],
-         '--timestamp=none', '--identifier', data['bundle_identifier'],
-         '--requirements', '=designated => ' + requirement(data), app])
+    if 'team_id' in data:
+        # Notarization needs the hardened runtime and a secure timestamp. The
+        # default designated requirement already names the bundle ID and team.
+        run(['/usr/bin/codesign', '--force', '--sign', data['identity_sha1'], '--keychain', data['keychain'],
+             '--options', 'runtime', '--timestamp', '--identifier', data['bundle_identifier'], app])
+    else:
+        run(['/usr/bin/codesign', '--force', '--sign', data['identity_sha1'], '--keychain', data['keychain'],
+             '--timestamp=none', '--identifier', data['bundle_identifier'],
+             '--requirements', '=designated => ' + requirement(data), app])
     verify(app, data)
 
 
@@ -98,26 +121,45 @@ def save_configuration(path, data):
         stream.write('\n')
 
 
+def developer_id(keychain, identity=None):
+    """Find the Developer ID Application certificate that Xcode created; never create one here."""
+    if identity and not re.fullmatch(r'[0-9A-Fa-f]{40}', identity):
+        raise RuntimeError('--identity must be the exact 40-character certificate fingerprint, not an ambiguous display name.')
+    listing = run(['/usr/bin/security', 'find-identity', '-v', '-p', 'codesigning', keychain], capture=True)
+    found = dict(re.findall(r'\b([0-9A-F]{40}) "Developer ID Application: [^"]*\(([A-Z0-9]{10})\)"', listing))
+    if identity:
+        found = {fingerprint: team for fingerprint, team in found.items() if fingerprint == identity.upper()}
+    if not found:
+        raise RuntimeError('No valid Developer ID Application certificate is in your login Keychain. '
+                           'Create one in Xcode → Settings → Accounts → Manage Certificates.')
+    if len(found) > 1:
+        raise RuntimeError('Several Developer ID certificates are available. Choose one with --identity <SHA-1 fingerprint>.')
+    return next(iter(found.items()))
+
+
 def setup_release(identity=None):
     if RELEASE_CONFIG.exists():
-        configuration(release=True)
-        print('Release signing is already configured. Keeping the existing identity.')
-        return
-    if identity:
-        if not re.fullmatch(r'[0-9A-Fa-f]{40}', identity):
-            raise RuntimeError('--identity must be the exact 40-character certificate fingerprint, not an ambiguous display name.')
-        fingerprint = identity.upper()
-        keychain = run(['/usr/bin/security', 'default-keychain', '-d', 'user'], capture=True).strip('"')
-    else:
-        # Reuse the existing local certificate; never create a second identity here.
-        local = configuration()
-        fingerprint, keychain = local['identity_sha1'], local['keychain']
+        if 'team_id' in json.loads(RELEASE_CONFIG.read_text()):
+            configuration(release=True)
+            print('Release signing is already configured. Keeping the existing identity.')
+            return
+        print('Replacing the self-signed release identity with Developer ID (a one-time switch).')
+    keychain = run(['/usr/bin/security', 'default-keychain', '-d', 'user'], capture=True).strip('"')
+    fingerprint, team = developer_id(keychain, identity)
     bundle_id = build_info(release=True)['CFBundleIdentifier']
     if not re.fullmatch(r'[A-Za-z0-9.-]+', bundle_id):
         raise RuntimeError('Unsupported bundle identifier.')
-    save_configuration(RELEASE_CONFIG, {'identity_sha1': fingerprint, 'keychain': keychain, 'bundle_identifier': bundle_id})
-    print(f'Releases of {bundle_id} will be signed with your existing certificate.')
-    print('Keep that certificate: users keep their permissions only while every release uses it.')
+    # Fail now rather than after a full build if notarization can't sign in.
+    try:
+        run(['/usr/bin/xcrun', 'notarytool', 'history', '--keychain-profile', NOTARY_PROFILE], capture=True)
+    except RuntimeError:
+        raise RuntimeError(f'No working notarization profile named {NOTARY_PROFILE}. Run: xcrun notarytool '
+                           f'store-credentials {NOTARY_PROFILE} --apple-id <Apple ID> --team-id {team}') from None
+    RELEASE_CONFIG.unlink(missing_ok=True)
+    save_configuration(RELEASE_CONFIG, {'identity_sha1': fingerprint, 'keychain': keychain, 'bundle_identifier': bundle_id,
+                                        'team_id': team, 'notary_profile': NOTARY_PROFILE})
+    print(f'Releases of {bundle_id} will be signed with Developer ID (team {team}) and notarized.')
+    print('Users keep their permissions as long as every release comes from this team.')
 
 
 def setup(identity=None):
@@ -295,13 +337,49 @@ def publishable(tag):
 
 
 def release_notes(digest):
-    return ('Download **GlassSnap.zip**, unzip it, and move GlassSnap to Applications.\n\n'
-            'The first time you open it, macOS says it “could not verify ‘GlassSnap’ is free of malware” and offers only '
-            '**Done** and **Move to Trash**. Click **Done**, then go to **System Settings → Privacy & Security**, scroll to '
-            '**Security**, and click **Open Anyway**. You only need to do this once. To skip it, install from Terminal instead:\n\n'
+    return ('Download **GlassSnap.zip**, open it, and move GlassSnap to Applications. '
+            'It’s signed with Developer ID and notarized by Apple, so it opens normally. Or install from Terminal:\n\n'
             '```\ncurl -fsSL https://raw.githubusercontent.com/Rodlip/GlassSnap/main/Scripts/install.sh | bash\n```\n\n'
             'Already installed? Choose **Check for Updates…** from the GlassSnap menu.\n\n'
+            '**Coming from 0.3.0?** That version was signed differently, so Check for Updates can’t install this one. '
+            'Run the Terminal command above, or quit GlassSnap and replace it with this download. Then turn its '
+            'permissions on again: in **System Settings → Privacy & Security → Accessibility**, select GlassSnap, click '
+            '**–**, then open GlassSnap and click **Enable access**. Do the same under **Screen & System Audio Recording** '
+            'if you use previews. This happens once; later updates keep your permissions.\n\n'
             f'SHA-256: `{digest}`')
+
+
+def package():
+    ARCHIVE.parent.mkdir(exist_ok=True)
+    ARCHIVE.unlink(missing_ok=True)
+    # Leave out local extended attributes; the signature doesn't need them.
+    run(['/usr/bin/ditto', '-c', '-k', '--norsrc', '--noextattr', '--keepParent', RELEASE_BUILD, ARCHIVE])
+
+
+def notarize(data):
+    """Have Apple notarize the archive, then staple the ticket so Gatekeeper accepts it offline."""
+    print('Submitting to Apple for notarization. This usually takes a few minutes…')
+    profile = ['--keychain-profile', data['notary_profile']]
+    submitted = subprocess.run(['/usr/bin/xcrun', 'notarytool', 'submit', str(ARCHIVE), *profile, '--wait',
+                                '--output-format', 'json'], cwd=ROOT, capture_output=True, text=True)
+    try:
+        result = json.loads(submitted.stdout)
+    except ValueError:
+        raise RuntimeError(f'notarytool failed ({submitted.returncode}). {submitted.stderr.strip()}') from None
+    if result.get('status') != 'Accepted':
+        log = ''
+        if result.get('id'):
+            log = subprocess.run(['/usr/bin/xcrun', 'notarytool', 'log', result['id'], *profile],
+                                 cwd=ROOT, capture_output=True, text=True).stdout
+        raise RuntimeError(f'Notarization finished with status {result.get("status", "unknown")}. Nothing was published.\n{log}')
+    run(['/usr/bin/xcrun', 'stapler', 'staple', RELEASE_BUILD], capture=True)
+    run(['/usr/bin/xcrun', 'stapler', 'validate', RELEASE_BUILD], capture=True)
+    verify(RELEASE_BUILD, data)
+    # Ask Gatekeeper directly, the same check a downloaded copy gets.
+    assessment = subprocess.run(['/usr/sbin/spctl', '--assess', '--type', 'execute', '-vv', str(RELEASE_BUILD)],
+                                capture_output=True, text=True)
+    if assessment.returncode or 'Notarized Developer ID' not in assessment.stderr:
+        raise RuntimeError(f'Gatekeeper rejected the notarized app. {assessment.stderr.strip()}')
 
 
 def release(publish=False):
@@ -314,12 +392,12 @@ def release(publish=False):
     verify(RELEASE_BUILD, data)
     if info(RELEASE_BUILD)['CFBundleShortVersionString'] != version:
         raise RuntimeError('The built app reports a different version than Resources/Info.plist.')
-    ARCHIVE.parent.mkdir(exist_ok=True)
-    ARCHIVE.unlink(missing_ok=True)
-    # Leave out local extended attributes; the signature doesn't need them.
-    run(['/usr/bin/ditto', '-c', '-k', '--norsrc', '--noextattr', '--keepParent', RELEASE_BUILD, ARCHIVE])
+    package()
+    notarize(data)
+    # Repackage so the download carries the stapled ticket.
+    package()
     digest = hashlib.sha256(ARCHIVE.read_bytes()).hexdigest()
-    print(f'Packaged GlassSnap {version}: {ARCHIVE.relative_to(ROOT)} (SHA-256 {digest})')
+    print(f'Packaged notarized GlassSnap {version}: {ARCHIVE.relative_to(ROOT)} (SHA-256 {digest})')
     if not publish:
         print('Not published. Run ./Scripts/release.sh --publish to create the GitHub release.')
         return
@@ -333,7 +411,7 @@ def main():
     sub = parser.add_subparsers(dest='command', required=True)
     setup_parser = sub.add_parser('setup')
     setup_parser.add_argument('--identity', help='Reuse an existing certificate by exact SHA-1 fingerprint')
-    setup_parser.add_argument('--release', action='store_true', help='Configure signing for public GitHub releases')
+    setup_parser.add_argument('--release', action='store_true', help='Configure Developer ID signing and notarization for public GitHub releases')
     check_parser = sub.add_parser('check')
     check_parser.add_argument('--release', action='store_true')
     sign_parser = sub.add_parser('sign')
